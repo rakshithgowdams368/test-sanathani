@@ -177,7 +177,7 @@ function ImagePromptCard({
               <Copy className="h-3 w-3" />
             </Button>
           </div>
-          <p className="rounded-md bg-muted/50 p-2 text-xs leading-relaxed line-clamp-4">
+          <p className="rounded-md bg-muted/50 p-2 text-xs leading-relaxed max-h-36 overflow-y-auto whitespace-pre-wrap">
             {prompt.first_frame_prompt}
           </p>
         </div>
@@ -193,14 +193,14 @@ function ImagePromptCard({
               <Copy className="h-3 w-3" />
             </Button>
           </div>
-          <p className="rounded-md bg-muted/50 p-2 text-xs leading-relaxed line-clamp-3">
+          <p className="rounded-md bg-muted/50 p-2 text-xs leading-relaxed max-h-36 overflow-y-auto whitespace-pre-wrap">
             {prompt.background_prompt}
           </p>
         </div>
         {prompt.negative_prompt && (
           <div className="space-y-1">
             <p className="text-xs font-medium text-destructive/70">Negative</p>
-            <p className="text-xs text-muted-foreground line-clamp-2">{prompt.negative_prompt}</p>
+            <p className="text-xs text-muted-foreground max-h-24 overflow-y-auto whitespace-pre-wrap">{prompt.negative_prompt}</p>
           </div>
         )}
 

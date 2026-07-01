@@ -210,18 +210,18 @@ export function StoryboardView({ shots, projectId }: StoryboardViewProps) {
           const p60Color = palette.p60?.hex || "#333";
           return (
             <Card key={shot.id} className="overflow-hidden">
-              <div className="flex">
+              <div className="flex min-w-0">
                 <div className="w-1.5 shrink-0" style={{ backgroundColor: p60Color }} />
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                   <CardHeader className="pb-2">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <CardTitle className="flex items-center gap-2 text-sm">
-                        <Badge variant="secondary" className="font-mono text-xs">
+                        <Badge variant="secondary" className="font-mono text-xs shrink-0">
                           {shot.shot_code}
                         </Badge>
-                        <span className="text-xs text-muted-foreground">{shot.duration_sec}s</span>
+                        <span className="text-xs text-muted-foreground shrink-0">{shot.duration_sec}s</span>
                       </CardTitle>
-                      <div className="flex gap-1">
+                      <div className="flex gap-1 shrink-0">
                         {palette.p60 && (
                           <div
                             className="h-3 w-3 rounded-full border"
@@ -246,21 +246,21 @@ export function StoryboardView({ shots, projectId }: StoryboardViewProps) {
                       </div>
                     </div>
                   </CardHeader>
-                  <CardContent className="space-y-2 pb-3">
-                    <p className="text-sm">{shot.description}</p>
+                  <CardContent className="space-y-2 pb-3 min-w-0">
+                    <p className="text-sm break-words">{shot.description}</p>
                     <div className="flex flex-wrap gap-1.5">
-                      {shot.lens && <Badge variant="outline" className="text-[10px]">{shot.lens}</Badge>}
+                      {shot.lens && <Badge variant="outline" className="text-[10px] break-all">{shot.lens}</Badge>}
                       {shot.framing && <Badge variant="outline" className="text-[10px]">{shot.framing}</Badge>}
-                      {shot.movement && <Badge variant="outline" className="text-[10px]">{shot.movement}</Badge>}
-                      {shot.lighting && <Badge variant="outline" className="text-[10px]">{shot.lighting}</Badge>}
+                      {shot.movement && <Badge variant="outline" className="text-[10px] break-all">{shot.movement}</Badge>}
+                      {shot.lighting && <Badge variant="outline" className="text-[10px] break-all">{shot.lighting}</Badge>}
                     </div>
                     {shot.expression && (
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-xs text-muted-foreground break-words">
                         <span className="font-medium">Expression: </span>{shot.expression}
                       </p>
                     )}
                     {shot.action && (
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-xs text-muted-foreground break-words">
                         <span className="font-medium">Action: </span>{shot.action}
                       </p>
                     )}
