@@ -11,6 +11,28 @@ const corsHeaders = {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+function parseJsonSafe(raw: string): any | null {
+  // Strip markdown fences
+  let s = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+  // Try direct parse
+  try { return JSON.parse(s); } catch {}
+  // Try to extract the first { ... } block (greedy)
+  const start = s.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0;
+  let end = -1;
+  for (let i = start; i < s.length; i++) {
+    if (s[i] === "{") depth++;
+    else if (s[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
+  }
+  if (end === -1) {
+    // Truncated — try adding closing braces
+    s = s.substring(start) + "}".repeat(depth);
+    try { return JSON.parse(s); } catch { return null; }
+  }
+  try { return JSON.parse(s.substring(start, end + 1)); } catch { return null; }
+}
+
 const VIDEO_DNA_SYSTEM = `You are a Film Forensics Analyst + reverse-prompt engineer. You are given SAMPLED FRAMES (in time order) from a single short video, the MEASURED dominant colour hex values per frame, the video metadata (duration, resolution, aspect, fps), and an audio TRANSCRIPT (or "music_only"). Reconstruct exactly how this video was made, so it can be re-created in the same style.
 
 ANALYSE FRAME BY FRAME:
@@ -136,7 +158,7 @@ Now analyze all the frames below and produce the Video DNA JSON.`
         ],
         temperature: 0.4,
         response_format: { type: "json_object" },
-        max_tokens: 8000,
+        max_tokens: 16000,
       }),
     });
 
@@ -151,8 +173,15 @@ Now analyze all the frames below and produce the Video DNA JSON.`
 
     const result = await response.json();
     const content = result.choices?.[0]?.message?.content || "";
-    const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-    const videoDna = JSON.parse(cleaned);
+    const videoDna = parseJsonSafe(content);
+
+    if (!videoDna) {
+      await supabase
+        .from("copycat_analyses")
+        .update({ status: "error", error: "Failed to parse Video DNA JSON from LLM response", updated_at: new Date().toISOString() })
+        .eq("id", analysis_id);
+      throw new Error("Failed to parse Video DNA JSON from model response");
+    }
 
     await supabase
       .from("copycat_analyses")

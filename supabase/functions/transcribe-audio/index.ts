@@ -11,6 +11,24 @@ const corsHeaders = {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+function parseJsonSafe(raw: string): any | null {
+  let s = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+  try { return JSON.parse(s); } catch {}
+  const start = s.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0;
+  let end = -1;
+  for (let i = start; i < s.length; i++) {
+    if (s[i] === "{") depth++;
+    else if (s[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
+  }
+  if (end === -1) {
+    s = s.substring(start) + "}".repeat(depth);
+    try { return JSON.parse(s); } catch { return null; }
+  }
+  try { return JSON.parse(s.substring(start, end + 1)); } catch { return null; }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -111,8 +129,11 @@ OUTPUT strict JSON:
 
     const result = await response.json();
     const content = result.choices?.[0]?.message?.content || "";
-    const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-    const transcript = JSON.parse(cleaned);
+    const transcript = parseJsonSafe(content);
+
+    if (!transcript) {
+      throw new Error("Failed to parse transcript JSON from model response");
+    }
 
     await supabase
       .from("copycat_analyses")

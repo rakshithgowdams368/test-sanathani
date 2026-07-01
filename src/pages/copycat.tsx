@@ -595,6 +595,3 @@ function GrowthPackView({ growthPack, onCopy }: { growthPack: any; onCopy: (t: s
     </div>
   );
 }
-
-
-export { CopyCatPage }
