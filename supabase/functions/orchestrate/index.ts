@@ -301,7 +301,8 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const { project_id } = await req.json();
+    const body = await req.json();
+    const { project_id, from_video_dna, video_dna, analysis_id } = body;
     if (!project_id) {
       return new Response(
         JSON.stringify({ error: "Missing project_id" }),
@@ -342,33 +343,87 @@ Deno.serve(async (req: Request) => {
 
     await supabase.from("projects").update({ status: "generating" }).eq("id", project_id);
 
-    // AGENT 1: Story Architect
-    const storyInput = JSON.stringify({
-      source_story: project.source_story,
-      format: project.format,
-      language: project.language,
-      target_duration_sec: project.target_duration_sec,
-      aspect_ratio: project.aspect_ratio,
-      deity_theme: project.deity_theme,
-    });
+    let blueprintResult: any;
 
-    const blueprintResult = await callOpenRouter(
-      openrouterKey, model, AGENT_PROMPTS.story_architect, storyInput
-    );
+    if (from_video_dna && video_dna) {
+      // CopyCat mode: derive blueprint from Video DNA instead of running Story Architect
+      const dnaMeta = video_dna.meta || {};
+      const dnaShots = video_dna.shots || [];
+      const dnaChars = video_dna.characters || [];
+      const dnaAudio = video_dna.audio || {};
 
-    await supabase.from("story_blueprints").delete().eq("project_id", project_id);
-    await supabase.from("story_blueprints").insert({
-      project_id,
-      logline: blueprintResult.logline,
-      synopsis: blueprintResult.synopsis,
-      tone: blueprintResult.tone,
-      emotional_arc: blueprintResult.emotional_arc,
-      act_structure: blueprintResult.act_structure,
-      scene_beats: blueprintResult.scene_beats,
-      deities: blueprintResult.deities,
-      total_shots: blueprintResult.total_shots,
-      raw: blueprintResult,
-    });
+      blueprintResult = {
+        logline: `Recreation of an observed ${dnaMeta.style || "cinematic"} sequence (${dnaMeta.duration_sec || 0}s, ${dnaMeta.aspect_ratio || "9:16"})`,
+        synopsis: video_dna.reconstruction_notes || `A ${dnaShots.length}-shot sequence in ${dnaMeta.style} style with ${dnaMeta.grade} grade and ${dnaMeta.pacing} pacing.`,
+        tone: `${dnaMeta.style || "photoreal"}, ${dnaMeta.grade || "cinematic"}, ${dnaMeta.energy_arc || "meditative"}`,
+        format: (dnaMeta.duration_sec || 0) <= 90 ? "reel" : "longform",
+        language: project.language || "kannada",
+        aspect_ratio: dnaMeta.aspect_ratio || project.aspect_ratio || "9:16",
+        total_duration_sec: dnaMeta.duration_sec || project.target_duration_sec || 30,
+        deities: dnaChars.map((c: any) => ({ name: c.name, sanskrit_name: c.name, role: c.identity_guess || "character" })),
+        emotional_arc: [{ beat: "observed sequence", value_word_en: dnaMeta.energy_arc || "meditative", value_word_local: dnaMeta.energy_arc || "" }],
+        act_structure: [{ act: "Single act", purpose: "Recreate observed visual style" }],
+        scene_beats: dnaShots.map((s: any, i: number) => ({
+          scene_no: i + 1,
+          beat: s.subject || `Shot ${s.shot_code}`,
+          location: s.composition || "observed location",
+          time_of_day: s.lighting || "day",
+          est_duration_sec: s.duration_sec || 5,
+          shots_estimate: 1,
+        })),
+        total_shots: dnaShots.length,
+      };
+
+      await supabase.from("story_blueprints").delete().eq("project_id", project_id);
+      await supabase.from("story_blueprints").insert({
+        project_id,
+        logline: blueprintResult.logline,
+        synopsis: blueprintResult.synopsis,
+        tone: blueprintResult.tone,
+        emotional_arc: blueprintResult.emotional_arc,
+        act_structure: blueprintResult.act_structure,
+        scene_beats: blueprintResult.scene_beats,
+        deities: blueprintResult.deities,
+        total_shots: blueprintResult.total_shots,
+        raw: blueprintResult,
+      });
+
+      // Update copycat analysis status
+      if (analysis_id) {
+        await supabase
+          .from("copycat_analyses")
+          .update({ status: "reconstructing", updated_at: new Date().toISOString() })
+          .eq("id", analysis_id);
+      }
+    } else {
+      // Normal mode: AGENT 1: Story Architect
+      const storyInput = JSON.stringify({
+        source_story: project.source_story,
+        format: project.format,
+        language: project.language,
+        target_duration_sec: project.target_duration_sec,
+        aspect_ratio: project.aspect_ratio,
+        deity_theme: project.deity_theme,
+      });
+
+      blueprintResult = await callOpenRouter(
+        openrouterKey, model, AGENT_PROMPTS.story_architect, storyInput
+      );
+
+      await supabase.from("story_blueprints").delete().eq("project_id", project_id);
+      await supabase.from("story_blueprints").insert({
+        project_id,
+        logline: blueprintResult.logline,
+        synopsis: blueprintResult.synopsis,
+        tone: blueprintResult.tone,
+        emotional_arc: blueprintResult.emotional_arc,
+        act_structure: blueprintResult.act_structure,
+        scene_beats: blueprintResult.scene_beats,
+        deities: blueprintResult.deities,
+        total_shots: blueprintResult.total_shots,
+        raw: blueprintResult,
+      });
+    }
 
     // AGENT 2: Character Designer (photoreal)
     const charInput = JSON.stringify({
@@ -635,6 +690,14 @@ Deno.serve(async (req: Request) => {
     });
 
     await supabase.from("projects").update({ status: "ready", updated_at: new Date().toISOString() }).eq("id", project_id);
+
+    // If CopyCat mode, mark analysis as ready
+    if (from_video_dna && analysis_id) {
+      await supabase
+        .from("copycat_analyses")
+        .update({ project_id, status: "ready", updated_at: new Date().toISOString() })
+        .eq("id", analysis_id);
+    }
 
     return new Response(
       JSON.stringify({ success: true }),

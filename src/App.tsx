@@ -11,6 +11,7 @@ import { NewStoryPage } from "@/pages/new-story";
 import { ProjectPage } from "@/pages/project";
 import { SettingsPage } from "@/pages/settings";
 import { PromptStudioPage } from "@/pages/prompt-studio";
+import { CopyCatPage } from "@/pages/copycat";
 import { Toaster } from "@/components/ui/sonner";
 
 const queryClient = new QueryClient();
@@ -60,6 +61,7 @@ export function App() {
                 <Route path="project/:id" element={<ProjectPage />} />
                 <Route path="settings" element={<SettingsPage />} />
                 <Route path="prompt-studio" element={<PromptStudioPage />} />
+                <Route path="copycat" element={<CopyCatPage />} />
               </Route>
             </Routes>
           </BrowserRouter>

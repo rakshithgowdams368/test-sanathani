@@ -14,18 +14,13 @@ import {
   SidebarMenuItem,
   SidebarRail,
 } from "@/components/ui/sidebar";
-import {
-  LayoutDashboard,
-  PlusCircle,
-  Settings,
-  Wand2,
-  LogOut,
-} from "lucide-react";
+import { LayoutDashboard, CirclePlus as PlusCircle, Settings, Wand as Wand2, ScanEye, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const navItems = [
   { title: "Dashboard", icon: LayoutDashboard, path: "/" },
   { title: "New Story", icon: PlusCircle, path: "/new-story" },
+  { title: "CopyCat", icon: ScanEye, path: "/copycat" },
   { title: "Prompt Studio", icon: Wand2, path: "/prompt-studio" },
   { title: "Settings", icon: Settings, path: "/settings" },
 ];
