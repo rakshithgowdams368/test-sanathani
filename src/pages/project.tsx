@@ -241,7 +241,7 @@ export function ProjectPage() {
           <ImagePromptsView prompts={imagePrompts ?? []} projectId={id!} />
         </TabsContent>
         <TabsContent value="video_prompt_engineer">
-          <VideoPromptsView prompts={videoPrompts ?? []} />
+          <VideoPromptsView prompts={videoPrompts ?? []} projectId={id!} />
         </TabsContent>
         <TabsContent value="sound_designer">
           <AudioBriefView brief={audioBrief} />

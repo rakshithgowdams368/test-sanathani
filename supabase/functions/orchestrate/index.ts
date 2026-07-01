@@ -162,18 +162,52 @@ GLOBAL STYLE DNA: ${GLOBAL_STYLE_DNA}
 
 OUTPUT strict JSON: { "image_prompts": [ { "shot_code": string, "first_frame_prompt": string, "background_prompt": string, "negative_prompt": string, "model": "seedream-v4-5", "aspect_ratio": string, "reference_urls": [string] | null, "params": { "resolution":"high", "n":1 } } ] }`,
 
-  video_prompt_engineer: `You are the Motion / Video Prompt Engineer for Kling 3.0 / Seedance 2.0 / Veo3 (image-to-video). For EACH shot, write the prompt that animates its first-frame image into a <=15s clip.
+  video_prompt_engineer: `You are the Motion + Performance + Dialogue Director for image-to-video (Kling 3.0 / Seedance 2.0 / Veo3, and Kling-Avatar / OmniHuman for talking close-ups). For EACH shot you receive: the shot (framing, camera, lens, movement, palette, lighting, expression, action, vfx), the characters_present with their consistency_token, and the project language + the dialogue/narration lines for that shot (from the script / sound_designer). Turn it into ONE complete, generation-ready talking cinematic video prompt.
 
-RULES:
-- The first-frame image is the init image; describe MOTION, not a new scene. Keep identity + composition stable.
-- Specify: camera move, subject action + micro-expression change, "living portrait" ambient motion, physics realism, and any VFX evolution.
-- Describe effects as VISUAL RESULTS, not editing software terms.
-- Duration per prompt <=15. No tool-specific flags.
-- This is a REAL filmed scene, not a render. Hair moves naturally, fabric drapes with weight, particles catch real light.
+NON-NEGOTIABLE RULES:
+1. IDENTITY LOCK. The first-frame image is the init frame. Open every prompt by ordering the model to PRESERVE the exact identity from the init image + the character's consistency_token: same face geometry, skin tone + texture, hair/crown, ornaments, costume. Say explicitly "do not restyle, do not change the face, keep the same person." Reuse the character's locked seed. Animate WITHIN this identity — never regenerate the character.
+2. DIALOGUE + LIP-SYNC. If the shot has spoken lines, embed them so the model speaks them with ACCURATE lip-sync:
+   - Keep the line EXACTLY in the project language (Kannada/Kanglish/English) — never translate it.
+   - Tag the speaker inline: [<Character>, speaking, lips fully synced to the words] "<exact line in project language>".
+   - Add an English delivery note (emotion, pace, volume, pitch): "(delivery: calm, low resonant, reassuring)".
+   - If two characters speak, order the lines and tag each speaker; only ONE mouth moves at a time.
+   - State the spoken language explicitly ("spoken in Kannada") and turn native audio ON.
+   - If NO dialogue, write ambient/diegetic sound only and set has_dialogue=false.
+3. CAMERA MOTION (method + lens). Specify BOTH the body move and the lens move, with speed + motivation:
+   - Body: static lock / slow dolly-in (push) / dolly-out (pull) / pan left / pan right / tilt up / tilt down / orbit-arc left|right / crane up|down / subtle handheld drift / parallax track.
+   - Lens: slow zoom-in / zoom-out / rack focus (pull focus from A to B) / hold.
+   - Tie the move to the beat: "camera slowly pushes in and lens eases to an 85mm-feel close-up as the line lands, ~20% speed."
+4. PERFORMANCE. Describe the character MOVEMENT (blocking / body / hands / gesture) AND a micro-EXPRESSION ARC across the clip (start emotion → shift → end emotion), synced to the dialogue.
+5. LIVING MOTION + VFX + SFX. Add ambient realism (hair, cloth, fire flicker, water, dust, cosmic motes, light shimmer), the VFX evolution over the clip, and diegetic SFX (conch, temple bell, wind, fire crackle, footsteps) + "silence" beats where power is in stillness.
+6. QUALITY. Hyper-realistic cinematic footage — a filmed shot, NOT a 3D render / CGI / cartoon. Never use the words render, CGI, 3D, Unreal, Octane, game, animation. End with a photoreal cinematic tail; duration ≤15s; describe aspect ratio in words; include a photoreal negative.
+7. MODEL ROUTING:
+   - Shot has dialogue + tight framing (CU/ECU) on one speaker → "kling-ai-avatar-pro" or "omnihuman-1.5"
+   - Shot has dialogue in a wider cinematic scene → "kling-3.0" (default) or "veo3"
+   - Shot has no dialogue → "bytedance/seedance-2.0" or "bytedance/seedance-2.0-fast" for drafts
+
+WEAVE all into a single "prompt" string in this order:
+[identity lock] → [character movement + expression arc] → [dialogue with speaker tag + lip-sync + language + delivery] → [camera body move + lens move + speed + motivation] → [living motion + VFX] → [SFX/ambience + native audio on] → [hyperreal cinematic tail].
 
 GLOBAL STYLE DNA: ${GLOBAL_STYLE_DNA}
+GLOBAL BILINGUAL RULE: ${GLOBAL_BILINGUAL_RULE}
 
-OUTPUT strict JSON: { "video_prompts": [ { "shot_code": string, "prompt": string, "model": "kling-3.0", "duration_sec": n, "camera_move": string, "effects": [string], "params": { "sound": false, "quality": "1080p" } } ] }`,
+OUTPUT strict JSON: { "video_prompts": [ {
+ "shot_code": string,
+ "characters_present": [ { "name": string, "consistency_token": string } ],
+ "identity_lock": string,
+ "dialogue": [ { "character": string, "line_local": string, "language": string, "delivery_en": string, "lip_sync": true } ],
+ "character_movement": string,
+ "expression_arc": string,
+ "camera_motion": { "body": string, "lens": string, "speed": string, "motivation": string },
+ "vfx": [string],
+ "sfx": [string],
+ "ambient_motion": string,
+ "audio": { "has_dialogue": boolean, "language": string, "sound": boolean },
+ "duration_sec": number,
+ "model": string,
+ "negative_prompt": string,
+ "prompt": string
+} ] }`,
 
   sound_designer: `You are the Music Director + Sound Designer. Produce (A) a Suno.ai music brief, (B) an ElevenLabs voiceover/narration package, (C) an SFX cue sheet.
 
@@ -503,36 +537,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // AGENT 6: Video Prompt Engineer
-    const vidInput = JSON.stringify({
-      shots,
-      characters: characters.map((c: any) => ({
-        name: c.name,
-        consistency_token: c.consistency_token,
-      })),
-    });
-
-    const vidResult = await callOpenRouter(
-      openrouterKey, model, AGENT_PROMPTS.video_prompt_engineer, vidInput
-    );
-
-    const videoPrompts = vidResult.video_prompts || [];
-    for (const vp of videoPrompts) {
-      const matchShot = insertedShots.find((s) => s.shot_code === vp.shot_code);
-      if (matchShot) {
-        await supabase.from("video_prompts").insert({
-          shot_id: matchShot.id,
-          prompt: vp.prompt,
-          model: vp.model || "kling-3.0",
-          duration_sec: vp.duration_sec,
-          camera_move: vp.camera_move,
-          effects: vp.effects,
-          params: vp.params,
-        });
-      }
-    }
-
-    // AGENT 7: Sound Designer
+    // AGENT 6: Sound Designer (runs before video so dialogue is available)
     const soundInput = JSON.stringify({
       blueprint: blueprintResult,
       shots,
@@ -556,6 +561,51 @@ Deno.serve(async (req: Request) => {
       sfx_cues: soundResult.sfx_cues,
       music_role: soundResult.music_role,
     });
+
+    // AGENT 7: Video Prompt Engineer (dialogue-driven cinematic)
+    const vidInput = JSON.stringify({
+      shots,
+      characters: characters.map((c: any) => ({
+        name: c.name,
+        consistency_token: c.consistency_token,
+        seed: c.seed || null,
+      })),
+      voiceover_script: soundResult.voiceover?.script || [],
+      language: project.language,
+      aspect_ratio: project.aspect_ratio,
+      style_dna: GLOBAL_STYLE_DNA,
+    });
+
+    const vidResult = await callOpenRouter(
+      openrouterKey, model, AGENT_PROMPTS.video_prompt_engineer, vidInput
+    );
+
+    const videoPrompts = vidResult.video_prompts || [];
+    for (const vp of videoPrompts) {
+      const matchShot = insertedShots.find((s) => s.shot_code === vp.shot_code);
+      if (matchShot) {
+        await supabase.from("video_prompts").insert({
+          shot_id: matchShot.id,
+          prompt: vp.prompt,
+          model: vp.model || "kling-3.0",
+          duration_sec: vp.duration_sec,
+          characters_present: vp.characters_present,
+          identity_lock: vp.identity_lock,
+          dialogue: vp.dialogue,
+          character_movement: vp.character_movement,
+          expression_arc: vp.expression_arc,
+          camera_motion: vp.camera_motion,
+          vfx: vp.vfx,
+          sfx: vp.sfx,
+          ambient_motion: vp.ambient_motion,
+          audio: vp.audio,
+          negative_prompt: vp.negative_prompt,
+          camera_move: vp.camera_motion?.body,
+          effects: vp.vfx,
+          params: { sound: vp.audio?.sound ?? false, quality: "1080p" },
+        });
+      }
+    }
 
     // AGENT 8: Growth Strategist
     const growthInput = JSON.stringify({
