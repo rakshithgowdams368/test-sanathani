@@ -10,7 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Image, Loader as Loader2, Circle as XCircle, RefreshCw, Sparkles, Wand as Wand2, Copy, Check, History, FileText, Image as ImageIcon, Lock, Zap } from "lucide-react";
+import { Image, Loader as Loader2, Circle as XCircle, RefreshCw, Sparkles, Wand as Wand2, Copy, Check, History, FileText, Image as ImageIcon, Lock, Zap, Upload } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
@@ -183,6 +183,8 @@ function CharacterCard({
   const [selectedLlm, setSelectedLlm] = useState("gemini");
   const [autoGenerateImage, setAutoGenerateImage] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const dna = char.dna || {};
   const imageUrl = char.ref_image_url || state.resultUrl;
@@ -409,6 +411,54 @@ function CharacterCard({
     }
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const validTypes = ["image/png", "image/jpeg", "image/webp", "video/mp4", "video/webm", "video/quicktime"];
+    if (!validTypes.includes(file.type)) {
+      toast.error("Please upload an image (png, jpg, webp) or video (mp4, webm, mov).");
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("Not authenticated");
+
+      const ext = file.name.split(".").pop() || "png";
+      const filePath = `${session.user.id}/${projectId}/${char.id}/${crypto.randomUUID()}.${ext}`;
+
+      const { error: uploadErr } = await supabase.storage
+        .from("character-images")
+        .upload(filePath, file, { contentType: file.type });
+
+      if (uploadErr) throw new Error(`Upload failed: ${uploadErr.message}`);
+
+      const { data: urlData } = supabase.storage
+        .from("character-images")
+        .getPublicUrl(filePath);
+
+      const publicUrl = urlData?.publicUrl;
+      if (!publicUrl) throw new Error("Failed to get public URL");
+
+      const { error: updateErr } = await supabase
+        .from("characters")
+        .update({ ref_image_url: publicUrl })
+        .eq("id", char.id);
+
+      if (updateErr) throw updateErr;
+
+      toast.success("Reference image uploaded and locked!");
+      queryClient.invalidateQueries({ queryKey: ["characters", projectId] });
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   useEffect(() => {
     if (state.status === "success") {
       setImageLoaded(false);
@@ -546,15 +596,34 @@ function CharacterCard({
                 </div>
               </div>
             ) : (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full gap-2 text-xs text-muted-foreground"
-                onClick={() => setShowRegenerate(true)}
-              >
-                <RefreshCw className="h-3 w-3" />
-                Regenerate Reference
-              </Button>
+              <div className="flex gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime"
+                  className="hidden"
+                  onChange={handleFileUpload}
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="flex-1 gap-2 text-xs text-muted-foreground"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                >
+                  {uploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
+                  {uploading ? "Uploading..." : "Upload"}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="flex-1 gap-2 text-xs text-muted-foreground"
+                  onClick={() => setShowRegenerate(true)}
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  Regenerate
+                </Button>
+              </div>
             )}
           </div>
         ) : isActive ? (
@@ -587,6 +656,27 @@ function CharacterCard({
         {!imageUrl && !isActive && state.status !== "failed" && (
           <>
             <Separator />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime"
+              className="hidden"
+              onChange={handleFileUpload}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full gap-2"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+            >
+              {uploading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Upload className="h-3.5 w-3.5" />
+              )}
+              {uploading ? "Uploading..." : "Upload Reference Image/Video"}
+            </Button>
             {!showMasterPrompt ? (
               <div className="space-y-2">
                 <Button

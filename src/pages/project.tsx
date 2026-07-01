@@ -1,10 +1,15 @@
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { BookOpen, Users, Camera, Image, Video, Music, TrendingUp, Zap, Loader as Loader2 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { BookOpen, Users, Camera, Image, Video, Music, TrendingUp, Zap, Loader as Loader2, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useState } from "react";
 import { StoryBlueprintView } from "@/components/pipeline/story-blueprint";
@@ -27,9 +32,12 @@ const AGENTS = [
 
 export function ProjectPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [orchestrating, setOrchestrating] = useState(false);
   const [activeAgent, setActiveAgent] = useState(0);
+  const [showEdit, setShowEdit] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
 
   const { data: project, isLoading: projectLoading } = useQuery({
     queryKey: ["project", id],
@@ -175,6 +183,17 @@ export function ProjectPage() {
     }
   };
 
+  const handleDelete = async () => {
+    try {
+      const { error } = await supabase.from("projects").delete().eq("id", id);
+      if (error) throw error;
+      toast.success("Project deleted");
+      navigate("/");
+    } catch (err: any) {
+      toast.error(err.message);
+    }
+  };
+
   if (projectLoading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -199,18 +218,38 @@ export function ProjectPage() {
             <Badge variant="secondary">{project.status}</Badge>
           </div>
         </div>
-        <Button
-          onClick={runOrchestrate}
-          disabled={orchestrating}
-          className="w-full gap-2 sm:w-auto"
-        >
-          {orchestrating ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Zap className="h-4 w-4" />
-          )}
-          {orchestrating ? "Generating..." : "Generate Package"}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={() => setShowEdit(true)}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            Edit
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 text-destructive hover:text-destructive"
+            onClick={() => setShowDelete(true)}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete
+          </Button>
+          <Button
+            onClick={runOrchestrate}
+            disabled={orchestrating}
+            className="gap-2"
+          >
+            {orchestrating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Zap className="h-4 w-4" />
+            )}
+            {orchestrating ? "Generating..." : "Generate Package"}
+          </Button>
+        </div>
       </div>
 
       <Tabs
@@ -250,6 +289,157 @@ export function ProjectPage() {
           <GrowthPackageView data={growthPackage} />
         </TabsContent>
       </Tabs>
+
+      {showEdit && (
+        <EditProjectDialog
+          project={project}
+          onClose={() => setShowEdit(false)}
+          onSaved={() => {
+            queryClient.invalidateQueries({ queryKey: ["project", id] });
+            setShowEdit(false);
+          }}
+        />
+      )}
+
+      <AlertDialog open={showDelete} onOpenChange={setShowDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Project</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete "{project.title}" and all its generated content. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleDelete}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
+  );
+}
+
+function EditProjectDialog({
+  project,
+  onClose,
+  onSaved,
+}: {
+  project: any;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [title, setTitle] = useState(project.title);
+  const [sourceStory, setSourceStory] = useState(project.source_story || "");
+  const [format, setFormat] = useState(project.format);
+  const [language, setLanguage] = useState(project.language);
+  const [duration, setDuration] = useState(String(project.target_duration_sec));
+  const [aspectRatio, setAspectRatio] = useState(project.aspect_ratio);
+  const [deityTheme, setDeityTheme] = useState(project.deity_theme || "");
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (!title.trim()) {
+      toast.error("Title is required");
+      return;
+    }
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from("projects")
+        .update({
+          title: title.trim(),
+          source_story: sourceStory.trim() || null,
+          format,
+          language,
+          target_duration_sec: parseInt(duration) || 30,
+          aspect_ratio: aspectRatio,
+          deity_theme: deityTheme.trim() || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", project.id);
+      if (error) throw error;
+      toast.success("Project updated");
+      onSaved();
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Edit Project</DialogTitle>
+          <DialogDescription>Update your project settings</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium">Title</label>
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium">Source Story</label>
+            <Textarea value={sourceStory} onChange={(e) => setSourceStory(e.target.value)} className="min-h-[80px]" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium">Format</label>
+              <Select value={format} onValueChange={(v: any) => setFormat(v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="reel">Reel</SelectItem>
+                  <SelectItem value="longform">Longform</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium">Language</label>
+              <Select value={language} onValueChange={setLanguage}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="kannada">Kannada</SelectItem>
+                  <SelectItem value="english">English</SelectItem>
+                  <SelectItem value="hindi">Hindi</SelectItem>
+                  <SelectItem value="mixed">Mixed</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium">Duration (sec)</label>
+              <Input type="number" value={duration} onChange={(e) => setDuration(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium">Aspect Ratio</label>
+              <Select value={aspectRatio} onValueChange={setAspectRatio}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="9:16">9:16</SelectItem>
+                  <SelectItem value="16:9">16:9</SelectItem>
+                  <SelectItem value="1:1">1:1</SelectItem>
+                  <SelectItem value="4:5">4:5</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium">Deity / Theme</label>
+            <Input value={deityTheme} onChange={(e) => setDeityTheme(e.target.value)} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleSave} disabled={saving}>
+            {saving ? "Saving..." : "Save Changes"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
