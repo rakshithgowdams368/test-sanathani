@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Copy } from "lucide-react";
+import { Copy, Mic, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 
 interface AudioBriefViewProps {
@@ -66,8 +66,22 @@ export function AudioBriefView({ brief }: AudioBriefViewProps) {
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Voiceover Script</CardTitle>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Mic className="h-4 w-4 text-primary" />
+            Voiceover Script
+          </CardTitle>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => copyToClipboard(
+              typeof brief.voiceover_script === "string"
+                ? brief.voiceover_script
+                : JSON.stringify(brief.voiceover_script, null, 2)
+            )}
+          >
+            <Copy className="h-3.5 w-3.5" />
+          </Button>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex gap-2">
@@ -79,11 +93,7 @@ export function AudioBriefView({ brief }: AudioBriefViewProps) {
             )}
           </div>
           {brief.voiceover_script && (
-            <div className="rounded-md bg-muted/50 p-3">
-              <p className="whitespace-pre-wrap text-xs leading-relaxed">
-                {brief.voiceover_script}
-              </p>
-            </div>
+            <VoiceScriptDisplay script={brief.voiceover_script} />
           )}
         </CardContent>
       </Card>
@@ -91,7 +101,10 @@ export function AudioBriefView({ brief }: AudioBriefViewProps) {
       {brief.sfx_cues && Array.isArray(brief.sfx_cues) && brief.sfx_cues.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">SFX Cues</CardTitle>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Volume2 className="h-4 w-4 text-primary" />
+              SFX Cues
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
@@ -112,4 +125,58 @@ export function AudioBriefView({ brief }: AudioBriefViewProps) {
       )}
     </div>
   );
+}
+
+function VoiceScriptDisplay({ script }: { script: any }) {
+  const lines = parseScript(script);
+
+  if (lines.length === 0) {
+    return (
+      <div className="rounded-md bg-muted/50 p-3">
+        <p className="whitespace-pre-wrap text-xs leading-relaxed">
+          {typeof script === "string" ? script : JSON.stringify(script, null, 2)}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {lines.map((line, i) => (
+        <div
+          key={i}
+          className="group relative rounded-lg border bg-card p-3 transition-colors hover:bg-muted/30"
+        >
+          <div className="flex items-start gap-3">
+            <Badge variant="secondary" className="shrink-0 font-mono text-[10px] mt-0.5">
+              {line.shot_code}
+            </Badge>
+            <div className="flex-1 min-w-0 space-y-1.5">
+              <p className="text-sm leading-relaxed">{line.line_local}</p>
+              {line.delivery_en && (
+                <p className="text-[11px] italic text-muted-foreground leading-relaxed">
+                  {line.delivery_en}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function parseScript(script: any): Array<{ shot_code: string; line_local: string; delivery_en?: string }> {
+  if (Array.isArray(script)) return script;
+
+  if (typeof script === "string") {
+    try {
+      const parsed = JSON.parse(script);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      // not JSON
+    }
+  }
+
+  return [];
 }
