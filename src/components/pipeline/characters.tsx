@@ -10,7 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Image, Loader as Loader2, Circle as XCircle, RefreshCw, Sparkles, Wand as Wand2, Copy, Check, History, FileText, Image as ImageIcon } from "lucide-react";
+import { Image, Loader as Loader2, Circle as XCircle, RefreshCw, Sparkles, Wand as Wand2, Copy, Check, History, FileText, Image as ImageIcon, Lock, Zap } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
@@ -21,10 +21,13 @@ interface CharactersViewProps {
 }
 
 const IMAGE_MODELS = [
-  { id: "nano-banana-2", label: "Nano Banana 2" },
+  { id: "seedream-v4-5", label: "Seedream 4.5 (Photoreal)" },
+  { id: "z-image", label: "Z-Image (Photoreal)" },
+  { id: "flux-2", label: "Flux 2 (Detail)" },
+  { id: "imagen4", label: "Imagen 4 Ultra" },
+  { id: "nano-banana-2", label: "Nano Banana 2 (Consistency)" },
+  { id: "gpt-image-2", label: "GPT Image 2" },
   { id: "flux-1.1-pro", label: "Flux 1.1 Pro" },
-  { id: "flux-dev", label: "Flux Dev" },
-  { id: "flux-schnell", label: "Flux Schnell" },
   { id: "ideogram-v2", label: "Ideogram V2" },
   { id: "recraft-v3", label: "Recraft V3" },
 ];
@@ -36,6 +39,7 @@ const LLM_MODELS = [
 ];
 
 const ASPECT_RATIOS = [
+  { id: "5:4", label: "5:4 (Reference Sheet)" },
   { id: "1:1", label: "1:1 (Square)" },
   { id: "3:4", label: "3:4 (Portrait)" },
   { id: "4:3", label: "4:3 (Landscape)" },
@@ -141,7 +145,7 @@ export function CharactersView({ characters, projectId }: CharactersViewProps) {
           key={char.id}
           char={char}
           projectId={projectId}
-          selectedModel={selectedModels[char.id] || "nano-banana-2"}
+          selectedModel={selectedModels[char.id] || "seedream-v4-5"}
           onModelChange={(value) =>
             setSelectedModels((prev) => ({ ...prev, [char.id]: value }))
           }
@@ -175,7 +179,7 @@ function CharacterCard({
   const [masterPrompt, setMasterPrompt] = useState("");
   const [negativePrompt, setNegativePrompt] = useState("");
   const [characterAnalysis, setCharacterAnalysis] = useState("");
-  const [selectedRatio, setSelectedRatio] = useState("1:1");
+  const [selectedRatio, setSelectedRatio] = useState("5:4");
   const [selectedLlm, setSelectedLlm] = useState("gemini");
   const [autoGenerateImage, setAutoGenerateImage] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -390,6 +394,21 @@ function CharacterCard({
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleLockReference = async () => {
+    if (!imageUrl) return;
+    try {
+      const { error } = await supabase
+        .from("characters")
+        .update({ ref_image_url: imageUrl })
+        .eq("id", char.id);
+      if (error) throw error;
+      toast.success("Reference locked for downstream shots!");
+      queryClient.invalidateQueries({ queryKey: ["characters", projectId] });
+    } catch (err: any) {
+      toast.error(err.message);
+    }
+  };
+
   useEffect(() => {
     if (state.status === "success") {
       setImageLoaded(false);
@@ -464,14 +483,26 @@ function CharacterCard({
         {imageUrl && !isActive ? (
           <div className="space-y-2">
             <div className="relative overflow-hidden rounded-md border bg-muted">
-              <AspectRatio ratio={1}>
+              {char.ref_image_final_url && (
+                <div className="absolute top-2 right-2 z-10 flex items-center gap-1 rounded-full bg-green-600/90 px-2 py-0.5">
+                  <Zap className="h-3 w-3 text-white" />
+                  <span className="text-[10px] font-medium text-white">Enhanced</span>
+                </div>
+              )}
+              {char.ref_image_url && (
+                <div className="absolute top-2 left-2 z-10 flex items-center gap-1 rounded-full bg-primary/90 px-2 py-0.5">
+                  <Lock className="h-3 w-3 text-white" />
+                  <span className="text-[10px] font-medium text-white">Locked</span>
+                </div>
+              )}
+              <AspectRatio ratio={5/4}>
                 {!imageLoaded && (
                   <div className="absolute inset-0 flex items-center justify-center">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                   </div>
                 )}
                 <img
-                  src={imageUrl}
+                  src={char.ref_image_final_url || imageUrl}
                   alt={`${char.name} reference`}
                   className={`h-full w-full object-cover transition-opacity duration-300 ${imageLoaded ? "opacity-100" : "opacity-0"}`}
                   onLoad={() => setImageLoaded(true)}
@@ -479,6 +510,18 @@ function CharacterCard({
                 />
               </AspectRatio>
             </div>
+
+            {!char.ref_image_url && (
+              <Button
+                variant="default"
+                size="sm"
+                className="w-full gap-2 text-xs"
+                onClick={handleLockReference}
+              >
+                <Lock className="h-3.5 w-3.5" />
+                Lock as Reference
+              </Button>
+            )}
 
             {showRegenerate ? (
               <div className="space-y-2">

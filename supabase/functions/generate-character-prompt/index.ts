@@ -11,34 +11,27 @@ const corsHeaders = {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-const SYSTEM_PROMPT = `You are an elite character concept artist and prompt engineer for hyper-realistic AI image generation. Your specialty is creating detailed character reference sheet prompts that produce consistent, production-quality character sheets.
+const SYSTEM_PROMPT = `You are an elite CINEMATOGRAPHY + PROSTHETICS prompt engineer. Produce a CHARACTER REFERENCE SHEET prompt that yields a hyper-realistic, film-grade result — a PHOTOGRAPH of a real costumed being, never a 3D render.
 
-When given a character (from mythology, history, or fiction), you MUST:
-1. Research and understand the character's canonical appearance, iconography, cultural significance
-2. Generate a comprehensive master prompt for a CHARACTER REFERENCE SHEET that includes:
-   - Multiple angles: FRONT view, 3/4 LEFT view, 3/4 RIGHT view, BACK view
-   - FACE close-up with expressions (neutral, fierce/divine, serene)
-   - Full body head-to-toe description
-   - Hyper-realistic rendering style (Unreal Engine 5 / Octane quality)
-   - Exact skin color/texture description
-   - Hair/crown/headgear details
-   - Eye color, shape, and divine features (third eye, etc.)
-   - Detailed garments with fabric texture and draping
-   - Ornaments, jewelry, sacred items
-   - Weapons/attributes held or nearby
-   - Aura/divine glow/particle effects
-   - Lighting setup for the reference sheet
-   - Background (neutral studio or contextual)
+The sheet (5:4) must contain, cleanly separated with thin gutters and small labels: FRONT full body, 3/4 LEFT, 3/4 RIGHT, BACK, and one FACE close-up (neutral + serene). Neutral seamless grey studio, soft large key + subtle rim, no dramatic grade (this is a reference).
+
+Write ONE dense paragraph, 220-360 words: subject → exact skin (tone, undertone, pores, subsurface scattering, sheen) → face geometry → eyes → hair/crown → garment (fabric weave, drape, wear) → ornaments (cast/hammered metal, gem cut, patina) → weapons/attributes → then camera+lighting+quality tail. End with a photoreal quality tail and a strong photoreal negative.
+
+QUALITY TAIL to append: "Photorealistic, hyperdetailed, 8K, cinematic still, shot on ARRI Alexa 65, natural skin subsurface scattering, visible skin pores and texture, physically accurate materials, volumetric lighting, film grain, sharp focus on eyes, professional colour grading. --style photographic."
+
+FORBIDDEN WORDS (never use in any prompt): render, CGI, 3D, Unreal, Octane, game, cartoon, illustration, painting, cel shading, anime.
 
 OUTPUT FORMAT - Return ONLY a JSON object:
 {
-  "master_prompt": "The complete image generation prompt ready to use",
-  "character_analysis": "Brief analysis of who this character is and key visual traits",
-  "recommended_negative": "Negative prompt to avoid common issues",
-  "style_notes": "Notes on the artistic direction"
+  "master_prompt": "The complete image generation prompt ready to use (220-360 words, single paragraph)",
+  "character_analysis": "Brief analysis of who this character is and key visual traits from iconography",
+  "recommended_negative": "3D render, CGI, video game render, Unreal Engine look, Octane render, plastic skin, waxy skin, airbrushed, smooth doll skin, cartoon, anime, illustration, painting, cel shading, over-saturated, over-sharpened halos, deformed hands, extra fingers, extra limbs, fused fingers, malformed face, asymmetric eyes, blurry, low-res, jpeg artifacts, watermark, text, logo, modern objects, wristwatch, plastic jewelry, duplicate, bad anatomy.",
+  "style_notes": "Notes on the artistic direction",
+  "recommended_model": "seedream-v4-5",
+  "recommended_upscaler": "topaz/image-upscale"
 }
 
-PROMPT STYLE: Write the master_prompt as a single cohesive paragraph, densely packed with visual detail. Use commas to separate descriptors. Include lighting, camera, and rendering keywords at the end. The prompt should be 200-400 words and incredibly specific about every visual element.`;
+PROMPT STYLE: Write the master_prompt as a single cohesive paragraph, densely packed with visual detail describing a REAL PHOTOGRAPH. Use commas to separate descriptors. Include lighting, camera, and rendering keywords at the end. The prompt should be 220-360 words and read as a cinematographer's brief for photographing a real costumed actor/creature on a physical set.`;
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -115,7 +108,7 @@ Deno.serve(async (req: Request) => {
 
 CHARACTER: ${character.name}${character.sanskrit_name ? ` (${character.sanskrit_name})` : ""}
 ROLE: ${character.role}
-ASPECT RATIO: ${aspect_ratio || "1:1"}
+ASPECT RATIO: ${aspect_ratio || "5:4"}
 
 EXISTING CHARACTER DNA:
 - Skin: ${dna.skin || "Not specified"}
@@ -128,9 +121,8 @@ EXISTING CHARACTER DNA:
 - Signature Aura: ${dna.signature_aura || "Not specified"}
 - Color Signature: ${dna.color_signature ? dna.color_signature.join(", ") : "Not specified"}
 ${character.consistency_token ? `- Consistency Token: ${character.consistency_token}` : ""}
-${character.turnaround_prompt ? `- Existing Turnaround Prompt: ${character.turnaround_prompt}` : ""}
 
-Generate the most detailed, production-quality character sheet prompt possible. Include ALL views (front, back, left, right) and face close-ups. Make it hyper-realistic with cinematic lighting. The prompt should be ready to paste directly into an image generation model.`;
+IMPORTANT: This is a PHOTOGRAPH of a REAL being — describe real skin with pores and subsurface scattering, real metal with reflections and patina, real fabric with weave and draping. The reference sheet shows a real costumed actor/creature photographed in a studio, NOT a digital creation. Include all 5 views (front, 3/4 left, 3/4 right, back, face close-up) on a neutral grey seamless background with soft studio lighting.`;
 
     const openrouterKey = cred.encrypted_key;
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -165,7 +157,6 @@ Generate the most detailed, production-quality character sheet prompt possible. 
     try {
       parsed = JSON.parse(cleaned);
     } catch {
-      // LLM sometimes returns improperly escaped JSON - try to fix common issues
       const fixed = cleaned
         .replace(/[\x00-\x1f]/g, (ch: string) => {
           if (ch === "\n") return "\\n";
@@ -176,7 +167,6 @@ Generate the most detailed, production-quality character sheet prompt possible. 
       try {
         parsed = JSON.parse(fixed);
       } catch {
-        // Last resort: extract the master_prompt field manually
         const promptMatch = cleaned.match(/"master_prompt"\s*:\s*"([\s\S]*?)(?:"\s*,\s*"|\"\s*\})/);
         const analysisMatch = cleaned.match(/"character_analysis"\s*:\s*"([\s\S]*?)(?:"\s*,\s*"|\"\s*\})/);
         const negativeMatch = cleaned.match(/"recommended_negative"\s*:\s*"([\s\S]*?)(?:"\s*,\s*"|\"\s*\})/);
@@ -184,8 +174,10 @@ Generate the most detailed, production-quality character sheet prompt possible. 
         parsed = {
           master_prompt: promptMatch ? promptMatch[1].replace(/\\n/g, " ").replace(/\\"/g, '"') : cleaned,
           character_analysis: analysisMatch ? analysisMatch[1] : "",
-          recommended_negative: negativeMatch ? negativeMatch[1] : "",
+          recommended_negative: negativeMatch ? negativeMatch[1] : "3D render, CGI, video game render, plastic skin, cartoon, anime, illustration, painting, deformed hands, extra fingers, blurry, watermark, text, logo, modern objects.",
           style_notes: "",
+          recommended_model: "seedream-v4-5",
+          recommended_upscaler: "topaz/image-upscale",
         };
       }
     }
@@ -198,7 +190,7 @@ Generate the most detailed, production-quality character sheet prompt possible. 
       kind: "prompt",
       prompt: parsed.master_prompt || "",
       negative_prompt: parsed.recommended_negative || null,
-      aspect_ratio: aspect_ratio || "1:1",
+      aspect_ratio: aspect_ratio || "5:4",
       model: selectedModel,
       character_analysis: parsed.character_analysis || null,
       status: "success",
@@ -208,7 +200,7 @@ Generate the most detailed, production-quality character sheet prompt possible. 
       JSON.stringify({ success: true, data: parsed }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
-  } catch (err) {
+  } catch (err: any) {
     return new Response(
       JSON.stringify({ error: err.message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

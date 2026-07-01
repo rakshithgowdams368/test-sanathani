@@ -4,10 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  BookOpen, Users, Camera, Image, Video,
-  Music, TrendingUp, Zap, Loader2,
-} from "lucide-react";
+import { BookOpen, Users, Camera, Image, Video, Music, TrendingUp, Zap, Loader as Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useState } from "react";
 import { StoryBlueprintView } from "@/components/pipeline/story-blueprint";
@@ -238,10 +235,10 @@ export function ProjectPage() {
           <CharactersView characters={characters ?? []} projectId={id!} />
         </TabsContent>
         <TabsContent value="cinematographer">
-          <StoryboardView shots={shots ?? []} />
+          <StoryboardView shots={shots ?? []} projectId={id!} />
         </TabsContent>
         <TabsContent value="image_prompt_engineer">
-          <ImagePromptsView prompts={imagePrompts ?? []} />
+          <ImagePromptsView prompts={imagePrompts ?? []} projectId={id!} />
         </TabsContent>
         <TabsContent value="video_prompt_engineer">
           <VideoPromptsView prompts={videoPrompts ?? []} />

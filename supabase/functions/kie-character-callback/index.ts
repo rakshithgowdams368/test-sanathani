@@ -19,7 +19,6 @@ Deno.serve(async (req: Request) => {
   try {
     const body = await req.json();
 
-    // kie.ai sends task_id in various locations
     const taskId =
       body.data?.task_id ||
       body.data?.taskId ||
@@ -51,7 +50,6 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Determine success - kie.ai uses various response formats
     const isSuccess =
       body.code === 200 ||
       body.code === "200" ||
@@ -60,7 +58,6 @@ Deno.serve(async (req: Request) => {
       body.data?.status === "completed" ||
       body.data?.state === "completed";
 
-    // Extract result URL from various possible locations in kie.ai response
     const resultUrl =
       body.data?.output?.image_url ||
       body.data?.output?.url ||
@@ -80,13 +77,13 @@ Deno.serve(async (req: Request) => {
       body.image_url ||
       null;
 
-    console.log("Callback received:", JSON.stringify({ taskId, isSuccess, resultUrl, bodyKeys: Object.keys(body) }));
+    console.log("Character callback:", JSON.stringify({ taskId, isSuccess, hasUrl: !!resultUrl }));
 
     if (isSuccess && resultUrl) {
       let finalUrl = resultUrl;
       const characterId = job.input?.character_id;
 
-      // Download image and store in Supabase Storage
+      // Download and store in Supabase Storage
       if (characterId) {
         try {
           const imageResponse = await fetch(resultUrl);
@@ -117,8 +114,6 @@ Deno.serve(async (req: Request) => {
             } else {
               console.error("Upload error:", uploadError.message);
             }
-          } else {
-            console.error("Failed to fetch image from kie.ai:", imageResponse.status);
           }
         } catch (fetchErr: any) {
           console.error("Error downloading/uploading image:", fetchErr.message);
@@ -162,8 +157,11 @@ Deno.serve(async (req: Request) => {
             status: "success",
           });
         }
+
+        // Auto-chain upscale for character reference
+        await autoChainCharacterUpscale(supabase, job, finalUrl, characterId);
       }
-    } else if (!isSuccess || !resultUrl) {
+    } else {
       const errorMsg =
         body.msg ||
         body.message ||
@@ -172,7 +170,7 @@ Deno.serve(async (req: Request) => {
         body.error ||
         "Generation failed - no image URL in response";
 
-      console.error("Generation failed:", errorMsg, "Body:", JSON.stringify(body));
+      console.error("Generation failed:", errorMsg);
 
       await supabase
         .from("generation_jobs")
@@ -196,3 +194,73 @@ Deno.serve(async (req: Request) => {
     );
   }
 });
+
+async function autoChainCharacterUpscale(supabase: any, parentJob: any, sourceUrl: string, characterId: string) {
+  try {
+    const { data: project } = await supabase
+      .from("projects")
+      .select("user_id")
+      .eq("id", parentJob.project_id)
+      .maybeSingle();
+
+    if (!project?.user_id) return;
+
+    const { data: cred } = await supabase
+      .from("api_credentials")
+      .select("encrypted_key")
+      .eq("user_id", project.user_id)
+      .eq("provider", "kie")
+      .maybeSingle();
+
+    if (!cred?.encrypted_key) return;
+
+    const callbackUrl = `${SUPABASE_URL}/functions/v1/kie-callback`;
+
+    const { data: upscaleJob } = await supabase
+      .from("generation_jobs")
+      .insert({
+        project_id: parentJob.project_id,
+        kind: "upscale",
+        provider: "kie",
+        model: "topaz/image-upscale",
+        status: "queuing",
+        parent_id: parentJob.id,
+        input: { source_url: sourceUrl, factor: 2, character_id: characterId },
+      })
+      .select("id")
+      .single();
+
+    if (!upscaleJob) return;
+
+    const kieResponse = await fetch("https://api.kie.ai/api/v1/jobs/createTask", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${cred.encrypted_key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "topaz/image-upscale",
+        callBackUrl: callbackUrl,
+        input: { image: sourceUrl, upscale_factor: 2 },
+      }),
+    });
+
+    if (kieResponse.ok) {
+      const kieData = await kieResponse.json();
+      const upscaleTaskId = kieData.data?.taskId || kieData.data?.task_id || kieData.taskId || kieData.task_id;
+      if (upscaleTaskId) {
+        await supabase
+          .from("generation_jobs")
+          .update({ kie_task_id: upscaleTaskId, status: "processing" })
+          .eq("id", upscaleJob.id);
+      }
+    } else {
+      await supabase
+        .from("generation_jobs")
+        .update({ status: "failed", error: "Failed to start upscale" })
+        .eq("id", upscaleJob.id);
+    }
+  } catch (err: any) {
+    console.error("Auto-chain character upscale error:", err.message);
+  }
+}

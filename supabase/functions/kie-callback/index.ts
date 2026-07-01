@@ -18,9 +18,16 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json();
-    const taskId = body.data?.task_id || body.data?.taskId || body.task_id;
+
+    const taskId =
+      body.data?.task_id ||
+      body.data?.taskId ||
+      body.task_id ||
+      body.taskId ||
+      body.data?.id;
 
     if (!taskId) {
+      console.error("No task_id in callback body:", JSON.stringify(body));
       return new Response(
         JSON.stringify({ error: "Missing task_id" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -36,22 +43,42 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
 
     if (!job) {
+      console.error("Job not found for taskId:", taskId);
       return new Response(
         JSON.stringify({ ok: true, message: "Job not found, ignoring" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const isSuccess = body.code === 200 || body.code === "200" || body.data?.status === "success";
-    // kie.ai image callback: data.info.resultImageUrl or data.info.originImageUrl
-    // kie.ai video callback: data.resultUrls[0]
+    const isSuccess =
+      body.code === 200 ||
+      body.code === "200" ||
+      body.status === "success" ||
+      body.data?.status === "success" ||
+      body.data?.status === "completed" ||
+      body.data?.state === "completed";
+
     const resultUrl =
+      body.data?.output?.image_url ||
+      body.data?.output?.url ||
+      body.data?.output?.[0]?.url ||
+      body.data?.output?.[0] ||
       body.data?.info?.resultImageUrl ||
       body.data?.info?.originImageUrl ||
+      body.data?.result?.image_url ||
+      body.data?.result?.url ||
       body.data?.resultUrls?.[0] ||
       body.data?.result_urls?.[0] ||
+      body.data?.image_url ||
+      body.data?.url ||
       body.data?.video_url ||
+      body.output?.image_url ||
+      body.output?.url ||
+      body.result_url ||
+      body.image_url ||
       null;
+
+    console.log("Callback:", JSON.stringify({ taskId, kind: job.kind, isSuccess, hasUrl: !!resultUrl }));
 
     if (isSuccess && resultUrl) {
       await supabase
@@ -62,8 +89,47 @@ Deno.serve(async (req: Request) => {
           updated_at: new Date().toISOString(),
         })
         .eq("id", job.id);
+
+      if (job.kind === "upscale") {
+        const characterId = job.input?.character_id;
+        if (characterId) {
+          await supabase
+            .from("characters")
+            .update({ ref_image_final_url: resultUrl })
+            .eq("id", characterId);
+        }
+        if (job.shot_id) {
+          await supabase
+            .from("image_prompts")
+            .update({ final_url: resultUrl })
+            .eq("shot_id", job.shot_id);
+        }
+      } else if (job.kind === "image" && job.shot_id) {
+        await supabase
+          .from("image_prompts")
+          .update({ base_url: resultUrl })
+          .eq("shot_id", job.shot_id);
+
+        await autoChainUpscale(supabase, job, resultUrl);
+      } else if (job.kind === "storyboard") {
+        const sheetNo = job.input?.sheet_no;
+        if (sheetNo && job.project_id) {
+          await supabase
+            .from("storyboard_sheets")
+            .update({ base_url: resultUrl, status: "success" })
+            .eq("project_id", job.project_id)
+            .eq("sheet_no", sheetNo);
+        }
+      }
     } else {
-      const errorMsg = body.msg || body.data?.error || "Generation failed";
+      const errorMsg =
+        body.msg ||
+        body.message ||
+        body.data?.error ||
+        body.data?.message ||
+        body.error ||
+        "Generation failed";
+
       await supabase
         .from("generation_jobs")
         .update({
@@ -78,10 +144,82 @@ Deno.serve(async (req: Request) => {
       JSON.stringify({ ok: true }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
-  } catch (err) {
+  } catch (err: any) {
+    console.error("Callback error:", err.message);
     return new Response(
       JSON.stringify({ error: err.message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });
+
+async function autoChainUpscale(supabase: any, parentJob: any, sourceUrl: string) {
+  try {
+    const { data: project } = await supabase
+      .from("projects")
+      .select("user_id")
+      .eq("id", parentJob.project_id)
+      .maybeSingle();
+
+    if (!project?.user_id) return;
+
+    const { data: cred } = await supabase
+      .from("api_credentials")
+      .select("encrypted_key")
+      .eq("user_id", project.user_id)
+      .eq("provider", "kie")
+      .maybeSingle();
+
+    if (!cred?.encrypted_key) return;
+
+    const callbackUrl = `${SUPABASE_URL}/functions/v1/kie-callback`;
+
+    const { data: upscaleJob } = await supabase
+      .from("generation_jobs")
+      .insert({
+        project_id: parentJob.project_id,
+        shot_id: parentJob.shot_id,
+        kind: "upscale",
+        provider: "kie",
+        model: "topaz/image-upscale",
+        status: "queuing",
+        parent_id: parentJob.id,
+        input: { source_url: sourceUrl, factor: 2, character_id: parentJob.input?.character_id || null },
+      })
+      .select("id")
+      .single();
+
+    if (!upscaleJob) return;
+
+    const kieResponse = await fetch("https://api.kie.ai/api/v1/jobs/createTask", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${cred.encrypted_key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "topaz/image-upscale",
+        callBackUrl: callbackUrl,
+        input: { image: sourceUrl, upscale_factor: 2 },
+      }),
+    });
+
+    if (kieResponse.ok) {
+      const kieData = await kieResponse.json();
+      const upscaleTaskId = kieData.data?.taskId || kieData.data?.task_id || kieData.taskId || kieData.task_id;
+      if (upscaleTaskId) {
+        await supabase
+          .from("generation_jobs")
+          .update({ kie_task_id: upscaleTaskId, status: "processing" })
+          .eq("id", upscaleJob.id);
+      }
+    } else {
+      await supabase
+        .from("generation_jobs")
+        .update({ status: "failed", error: "Failed to start upscale" })
+        .eq("id", upscaleJob.id);
+    }
+  } catch (err: any) {
+    console.error("Auto-chain upscale error:", err.message);
+  }
+}
