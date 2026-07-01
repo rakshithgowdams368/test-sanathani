@@ -11,6 +11,50 @@ const corsHeaders = {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+function sanitizeJsonString(raw: string): string {
+  // Strip markdown fences
+  let s = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+  // Fix unescaped newlines/tabs/control chars inside JSON string values
+  // Walk through and escape literal newlines that appear between quotes
+  let result = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escaped) { result += ch; escaped = false; continue; }
+    if (ch === "\\") { result += ch; escaped = true; continue; }
+    if (ch === '"') { result += ch; inString = !inString; continue; }
+    if (inString) {
+      if (ch === "\n") { result += "\\n"; continue; }
+      if (ch === "\r") { result += "\\r"; continue; }
+      if (ch === "\t") { result += "\\t"; continue; }
+    }
+    result += ch;
+  }
+  return result;
+}
+
+function parseJsonSafe(raw: string): any | null {
+  // Try direct parse after stripping fences
+  let s = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+  try { return JSON.parse(s); } catch {}
+  // Try with sanitized newlines
+  try { return JSON.parse(sanitizeJsonString(raw)); } catch {}
+  // Extract first { ... } block via brace counting
+  const start = s.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0;
+  let end = -1;
+  for (let i = start; i < s.length; i++) {
+    if (s[i] === "{") depth++;
+    else if (s[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
+  }
+  const block = end === -1 ? s.substring(start) + "}".repeat(depth) : s.substring(start, end + 1);
+  try { return JSON.parse(block); } catch {}
+  try { return JSON.parse(sanitizeJsonString(block)); } catch {}
+  return null;
+}
+
 const GLOBAL_STYLE_DNA = `Target look = HYPER-REALISTIC CINEMATIC PHOTOGRAPH, indistinguishable from a frame of a big-budget mythological feature film. NOT a 3D render, NOT CGI, NOT a video-game look. Shot on a large-format cinema camera (ARRI Alexa 65 / Sony Venice) on prime lenses. Photographic realism: real human skin with subsurface scattering, visible pores, fine vellus hair, natural oil sheen, micro-wrinkles, realistic sweat/moisture where relevant; real fabric weave and thread on garments; real hammered/cast metal on ornaments with true reflections; real hair strands with flyaways. Cinematic lighting with soft key + strong rim/backlight, motivated practicals (diya, moon, fire, god-rays), volumetric atmosphere and haze, gentle lens bloom, natural film grain, subtle chromatic aberration at edges, shallow depth of field on close-ups with creamy bokeh, deep focus on epic wides. Colour is a deliberate cinematic grade (see per-shot 30-60-10 palette). Photographed, not illustrated.`;
 
 const GLOBAL_REALISM_TAIL = `Photorealistic, hyperdetailed, 8K, cinematic still, shot on ARRI Alexa 65, natural skin subsurface scattering, visible skin pores and texture, physically accurate materials, volumetric lighting, film grain, sharp focus on eyes, professional colour grading. --style photographic.`;
@@ -270,8 +314,11 @@ async function callOpenRouter(
   const result = await response.json();
   const content = result.choices?.[0]?.message?.content || "";
 
-  const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-  return JSON.parse(cleaned);
+  const parsed = parseJsonSafe(content);
+  if (!parsed) {
+    throw new Error(`Failed to parse JSON from model response (first 200 chars): ${content.substring(0, 200)}`);
+  }
+  return parsed;
 }
 
 Deno.serve(async (req: Request) => {

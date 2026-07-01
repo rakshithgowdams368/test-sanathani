@@ -11,9 +11,30 @@ const corsHeaders = {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+function sanitizeJsonString(raw: string): string {
+  let s = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+  let result = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escaped) { result += ch; escaped = false; continue; }
+    if (ch === "\\") { result += ch; escaped = true; continue; }
+    if (ch === '"') { result += ch; inString = !inString; continue; }
+    if (inString) {
+      if (ch === "\n") { result += "\\n"; continue; }
+      if (ch === "\r") { result += "\\r"; continue; }
+      if (ch === "\t") { result += "\\t"; continue; }
+    }
+    result += ch;
+  }
+  return result;
+}
+
 function parseJsonSafe(raw: string): any | null {
   let s = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
   try { return JSON.parse(s); } catch {}
+  try { return JSON.parse(sanitizeJsonString(raw)); } catch {}
   const start = s.indexOf("{");
   if (start === -1) return null;
   let depth = 0;
@@ -22,11 +43,10 @@ function parseJsonSafe(raw: string): any | null {
     if (s[i] === "{") depth++;
     else if (s[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
   }
-  if (end === -1) {
-    s = s.substring(start) + "}".repeat(depth);
-    try { return JSON.parse(s); } catch { return null; }
-  }
-  try { return JSON.parse(s.substring(start, end + 1)); } catch { return null; }
+  const block = end === -1 ? s.substring(start) + "}".repeat(depth) : s.substring(start, end + 1);
+  try { return JSON.parse(block); } catch {}
+  try { return JSON.parse(sanitizeJsonString(block)); } catch {}
+  return null;
 }
 
 Deno.serve(async (req: Request) => {

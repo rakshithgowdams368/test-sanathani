@@ -11,12 +11,30 @@ const corsHeaders = {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-function parseJsonSafe(raw: string): any | null {
-  // Strip markdown fences
+function sanitizeJsonString(raw: string): string {
   let s = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-  // Try direct parse
+  let result = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escaped) { result += ch; escaped = false; continue; }
+    if (ch === "\\") { result += ch; escaped = true; continue; }
+    if (ch === '"') { result += ch; inString = !inString; continue; }
+    if (inString) {
+      if (ch === "\n") { result += "\\n"; continue; }
+      if (ch === "\r") { result += "\\r"; continue; }
+      if (ch === "\t") { result += "\\t"; continue; }
+    }
+    result += ch;
+  }
+  return result;
+}
+
+function parseJsonSafe(raw: string): any | null {
+  let s = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
   try { return JSON.parse(s); } catch {}
-  // Try to extract the first { ... } block (greedy)
+  try { return JSON.parse(sanitizeJsonString(raw)); } catch {}
   const start = s.indexOf("{");
   if (start === -1) return null;
   let depth = 0;
@@ -25,12 +43,10 @@ function parseJsonSafe(raw: string): any | null {
     if (s[i] === "{") depth++;
     else if (s[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
   }
-  if (end === -1) {
-    // Truncated — try adding closing braces
-    s = s.substring(start) + "}".repeat(depth);
-    try { return JSON.parse(s); } catch { return null; }
-  }
-  try { return JSON.parse(s.substring(start, end + 1)); } catch { return null; }
+  const block = end === -1 ? s.substring(start) + "}".repeat(depth) : s.substring(start, end + 1);
+  try { return JSON.parse(block); } catch {}
+  try { return JSON.parse(sanitizeJsonString(block)); } catch {}
+  return null;
 }
 
 const VIDEO_DNA_SYSTEM = `You are a Film Forensics Analyst + reverse-prompt engineer. You are given SAMPLED FRAMES (in time order) from a single short video, the MEASURED dominant colour hex values per frame, the video metadata (duration, resolution, aspect, fps), and an audio TRANSCRIPT (or "music_only"). Reconstruct exactly how this video was made, so it can be re-created in the same style.
