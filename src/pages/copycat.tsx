@@ -46,17 +46,36 @@ export function CopyCatPage() {
     setStage("extracting");
 
     try {
+      // Get auth session first
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("Not authenticated");
+
+      // Upload video to Supabase Storage first
+      const fileExt = file.name.split(".").pop() || "mp4";
+      const filePath = `${session.user.id}/${crypto.randomUUID()}.${fileExt}`;
+
+      const { error: uploadErr } = await supabase.storage
+        .from("copycat-videos")
+        .upload(filePath, file, { contentType: file.type });
+
+      if (uploadErr) throw new Error(`Video upload failed: ${uploadErr.message}`);
+
+      const { data: urlData } = supabase.storage
+        .from("copycat-videos")
+        .getPublicUrl(filePath);
+
+      const videoStorageUrl = urlData?.publicUrl || filePath;
+      toast.success("Video uploaded to storage");
+
       // Stage A: Client-side frame extraction
       const result = await extractFramesAndPalette(file, { fps: 1, maxFrames: 36, longSide: 512, swatches: 5 }, setExtractionProgress);
       setExtraction(result);
 
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error("Not authenticated");
-
-      // Create analysis record
+      // Create analysis record with video URL
       const { data: analysis, error: insertErr } = await supabase
         .from("copycat_analyses")
         .insert({
+          source_video_url: videoStorageUrl,
           meta: result.meta,
           frame_count: result.frames.length,
           status: "extracting",
@@ -64,7 +83,7 @@ export function CopyCatPage() {
         .select("id")
         .single();
 
-      if (insertErr || !analysis) throw new Error("Failed to create analysis record");
+      if (insertErr || !analysis) throw new Error(`Failed to create analysis record: ${insertErr?.message || "Unknown error"}`);
       setAnalysisId(analysis.id);
 
       // Stage B: Transcribe audio
@@ -78,7 +97,7 @@ export function CopyCatPage() {
             "Content-Type": "application/json",
             Apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
           },
-          body: JSON.stringify({ analysis_id: analysis.id }),
+          body: JSON.stringify({ analysis_id: analysis.id, video_url: videoStorageUrl }),
         }
       );
 
@@ -128,7 +147,7 @@ export function CopyCatPage() {
           source_story: video_dna.reconstruction_notes || "Reconstructed from video analysis",
           format: (dnaMeta.duration_sec || 0) <= 90 ? "reel" : "longform",
           language: transcript?.language_guess || "kannada",
-          target_duration_sec: dnaMeta.duration_sec || 30,
+          target_duration_sec: Math.round(dnaMeta.duration_sec || 30),
           aspect_ratio: dnaMeta.aspect_ratio || "9:16",
           deity_theme: (video_dna.characters || []).map((c: any) => c.name).join(", ") || "observed",
           status: "generating",
@@ -136,7 +155,7 @@ export function CopyCatPage() {
         .select("id")
         .single();
 
-      if (projErr || !project) throw new Error("Failed to create project");
+      if (projErr || !project) throw new Error(`Failed to create project: ${projErr?.message || "Unknown error"}`);
       setProjectId(project.id);
 
       const orchestrateRes = await fetch(
@@ -576,3 +595,6 @@ function GrowthPackView({ growthPack, onCopy }: { growthPack: any; onCopy: (t: s
     </div>
   );
 }
+
+
+export { CopyCatPage }
