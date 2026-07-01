@@ -261,7 +261,7 @@ function VideoPromptCard({
               <Copy className="h-3 w-3" />
             </Button>
           </div>
-          <p className="rounded-md bg-muted/50 p-2 font-mono text-[11px] leading-relaxed line-clamp-6">
+          <p className="rounded-md bg-muted/50 p-2 font-mono text-[11px] leading-relaxed max-h-48 overflow-y-auto whitespace-pre-wrap">
             {prompt.prompt}
           </p>
         </div>
