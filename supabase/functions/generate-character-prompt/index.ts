@@ -67,7 +67,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const { character_id, project_id, aspect_ratio } = await req.json();
+    const { character_id, project_id, aspect_ratio, llm_model } = await req.json();
 
     if (!character_id || !project_id) {
       return new Response(
@@ -75,6 +75,13 @@ Deno.serve(async (req: Request) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    const LLM_MODELS: Record<string, string> = {
+      "gemini": "google/gemini-2.5-flash",
+      "claude": "anthropic/claude-sonnet-4",
+      "openai": "openai/gpt-4o",
+    };
+    const selectedModel = LLM_MODELS[llm_model || "gemini"] || LLM_MODELS["gemini"];
 
     const { data: cred } = await supabase
       .from("api_credentials")
@@ -135,7 +142,7 @@ Generate the most detailed, production-quality character sheet prompt possible. 
         "X-Title": "Purana Engine",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: selectedModel,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: userMessage },
@@ -192,6 +199,7 @@ Generate the most detailed, production-quality character sheet prompt possible. 
       prompt: parsed.master_prompt || "",
       negative_prompt: parsed.recommended_negative || null,
       aspect_ratio: aspect_ratio || "1:1",
+      model: selectedModel,
       character_analysis: parsed.character_analysis || null,
       status: "success",
     });

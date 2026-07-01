@@ -10,7 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Image, Loader2, XCircle, RefreshCw, Sparkles, Wand2, Copy, Check, History, FileText, ImageIcon } from "lucide-react";
+import { Image, Loader as Loader2, Circle as XCircle, RefreshCw, Sparkles, Wand as Wand2, Copy, Check, History, FileText, Image as ImageIcon } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
@@ -27,6 +27,12 @@ const IMAGE_MODELS = [
   { id: "flux-schnell", label: "Flux Schnell" },
   { id: "ideogram-v2", label: "Ideogram V2" },
   { id: "recraft-v3", label: "Recraft V3" },
+];
+
+const LLM_MODELS = [
+  { id: "gemini", label: "Gemini 2.5 Flash", icon: "G" },
+  { id: "claude", label: "Claude Sonnet", icon: "C" },
+  { id: "openai", label: "GPT-4o", icon: "O" },
 ];
 
 const ASPECT_RATIOS = [
@@ -160,6 +166,8 @@ function CharacterCard({
   const [negativePrompt, setNegativePrompt] = useState("");
   const [characterAnalysis, setCharacterAnalysis] = useState("");
   const [selectedRatio, setSelectedRatio] = useState("1:1");
+  const [selectedLlm, setSelectedLlm] = useState("gemini");
+  const [autoGenerateImage, setAutoGenerateImage] = useState(true);
   const [copied, setCopied] = useState(false);
 
   const dna = char.dna || {};
@@ -191,6 +199,7 @@ function CharacterCard({
             character_id: char.id,
             project_id: projectId,
             aspect_ratio: selectedRatio,
+            llm_model: selectedLlm,
           }),
         }
       );
@@ -207,10 +216,52 @@ function CharacterCard({
       setNegativePrompt(data.recommended_negative || "");
       setCharacterAnalysis(data.character_analysis || "");
       toast.success("Master prompt generated!");
+
+      if (autoGenerateImage && data.master_prompt) {
+        triggerImageGeneration(data.master_prompt, session.access_token);
+      }
     } catch (err: any) {
       toast.error(err.message);
     } finally {
       setGeneratingPrompt(false);
+    }
+  };
+
+  const triggerImageGeneration = async (prompt: string, accessToken: string) => {
+    setShowMasterPrompt(false);
+    setState({ status: "submitting", progress: 2 });
+
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/kie-character-image`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+            Apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({
+            character_id: char.id,
+            project_id: projectId,
+            model: selectedModel,
+            prompt,
+            aspect_ratio: selectedRatio,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(err.error || `Request failed (${response.status})`);
+      }
+
+      const result = await response.json();
+      startTracking(result.taskId);
+      toast.success("Image generation started!");
+    } catch (err: any) {
+      toast.error(err.message);
+      setState({ status: "failed", progress: 0, error: err.message });
     }
   };
 
@@ -511,9 +562,13 @@ function CharacterCard({
                 characterAnalysis={characterAnalysis}
                 selectedRatio={selectedRatio}
                 selectedModel={selectedModel}
+                selectedLlm={selectedLlm}
+                autoGenerateImage={autoGenerateImage}
                 copied={copied}
                 onRatioChange={setSelectedRatio}
                 onModelChange={onModelChange}
+                onLlmChange={setSelectedLlm}
+                onAutoGenerateChange={setAutoGenerateImage}
                 onMasterPromptChange={setMasterPrompt}
                 onGeneratePrompt={handleGenerateMasterPrompt}
                 onGenerateImage={handleGenerateFromPrompt}
@@ -535,9 +590,13 @@ function MasterPromptPanel({
   characterAnalysis,
   selectedRatio,
   selectedModel,
+  selectedLlm,
+  autoGenerateImage,
   copied,
   onRatioChange,
   onModelChange,
+  onLlmChange,
+  onAutoGenerateChange,
   onMasterPromptChange,
   onGeneratePrompt,
   onGenerateImage,
@@ -550,9 +609,13 @@ function MasterPromptPanel({
   characterAnalysis: string;
   selectedRatio: string;
   selectedModel: string;
+  selectedLlm: string;
+  autoGenerateImage: boolean;
   copied: boolean;
   onRatioChange: (v: string) => void;
   onModelChange: (v: string) => void;
+  onLlmChange: (v: string) => void;
+  onAutoGenerateChange: (v: boolean) => void;
   onMasterPromptChange: (v: string) => void;
   onGeneratePrompt: () => void;
   onGenerateImage: () => void;
@@ -571,7 +634,32 @@ function MasterPromptPanel({
         </Button>
       </div>
 
-      {/* Step 1: Select aspect ratio and generate prompt */}
+      {/* LLM Model Selection */}
+      <div className="space-y-1">
+        <label className="text-[10px] font-medium text-muted-foreground">AI Model for Prompt Generation</label>
+        <div className="grid grid-cols-3 gap-1.5">
+          {LLM_MODELS.map((m) => (
+            <button
+              key={m.id}
+              onClick={() => onLlmChange(m.id)}
+              className={`flex items-center gap-1.5 rounded-md border px-2.5 py-2 text-xs font-medium transition-all ${
+                selectedLlm === m.id
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
+              }`}
+            >
+              <span className={`flex h-5 w-5 items-center justify-center rounded text-[10px] font-bold ${
+                selectedLlm === m.id ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+              }`}>
+                {m.icon}
+              </span>
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Aspect ratio + Image model row */}
       <div className="grid grid-cols-2 gap-2">
         <div className="space-y-1">
           <label className="text-[10px] font-medium text-muted-foreground">Aspect Ratio</label>
@@ -600,6 +688,19 @@ function MasterPromptPanel({
           </Select>
         </div>
       </div>
+
+      {/* Auto-generate toggle */}
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={autoGenerateImage}
+          onChange={(e) => onAutoGenerateChange(e.target.checked)}
+          className="h-3.5 w-3.5 rounded border-border accent-primary"
+        />
+        <span className="text-[10px] text-muted-foreground">
+          Auto-generate character sheet image after prompt is ready
+        </span>
+      </label>
 
       <Button
         variant="secondary"
@@ -648,15 +749,26 @@ function MasterPromptPanel({
             </div>
           )}
 
-          <Button
-            variant="default"
-            size="sm"
-            className="w-full gap-2"
-            onClick={onGenerateImage}
-          >
-            <Image className="h-3.5 w-3.5" />
-            Generate Character Sheet
-          </Button>
+          {!autoGenerateImage && (
+            <Button
+              variant="default"
+              size="sm"
+              className="w-full gap-2"
+              onClick={onGenerateImage}
+            >
+              <Image className="h-3.5 w-3.5" />
+              Generate Character Sheet Image
+            </Button>
+          )}
+
+          {autoGenerateImage && (
+            <div className="flex items-center gap-2 rounded bg-primary/5 p-2">
+              <Sparkles className="h-3.5 w-3.5 text-primary" />
+              <span className="text-[10px] text-primary font-medium">
+                Image generation will start automatically
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>
