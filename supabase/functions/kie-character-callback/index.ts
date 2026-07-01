@@ -18,11 +18,19 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json();
-    const taskId = body.data?.task_id || body.data?.taskId || body.task_id;
+
+    // kie.ai sends task_id in various locations
+    const taskId =
+      body.data?.task_id ||
+      body.data?.taskId ||
+      body.task_id ||
+      body.taskId ||
+      body.data?.id;
 
     if (!taskId) {
+      console.error("No task_id in callback body:", JSON.stringify(body));
       return new Response(
-        JSON.stringify({ error: "Missing task_id" }),
+        JSON.stringify({ error: "Missing task_id", received: body }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -36,34 +44,62 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
 
     if (!job) {
+      console.error("Job not found for taskId:", taskId);
       return new Response(
         JSON.stringify({ ok: true, message: "Job not found, ignoring" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const isSuccess = body.code === 200 || body.code === "200" || body.data?.status === "success";
-    // kie.ai image callback: data.info.resultImageUrl or data.info.originImageUrl
-    // kie.ai video callback: data.resultUrls[0]
+    // Determine success - kie.ai uses various response formats
+    const isSuccess =
+      body.code === 200 ||
+      body.code === "200" ||
+      body.status === "success" ||
+      body.data?.status === "success" ||
+      body.data?.status === "completed" ||
+      body.data?.state === "completed";
+
+    // Extract result URL from various possible locations in kie.ai response
     const resultUrl =
+      body.data?.output?.image_url ||
+      body.data?.output?.url ||
+      body.data?.output?.[0]?.url ||
+      body.data?.output?.[0] ||
       body.data?.info?.resultImageUrl ||
       body.data?.info?.originImageUrl ||
+      body.data?.result?.image_url ||
+      body.data?.result?.url ||
       body.data?.resultUrls?.[0] ||
       body.data?.result_urls?.[0] ||
+      body.data?.image_url ||
+      body.data?.url ||
+      body.output?.image_url ||
+      body.output?.url ||
+      body.result_url ||
+      body.image_url ||
       null;
+
+    console.log("Callback received:", JSON.stringify({ taskId, isSuccess, resultUrl, bodyKeys: Object.keys(body) }));
 
     if (isSuccess && resultUrl) {
       let finalUrl = resultUrl;
       const characterId = job.input?.character_id;
 
+      // Download image and store in Supabase Storage
       if (characterId) {
         try {
           const imageResponse = await fetch(resultUrl);
           if (imageResponse.ok) {
             const contentType = imageResponse.headers.get("content-type") || "image/png";
-            const ext = contentType.includes("jpeg") || contentType.includes("jpg") ? "jpg" : contentType.includes("webp") ? "webp" : "png";
+            const ext = contentType.includes("jpeg") || contentType.includes("jpg")
+              ? "jpg"
+              : contentType.includes("webp")
+                ? "webp"
+                : "png";
             const imageBuffer = await imageResponse.arrayBuffer();
-            const filePath = `${job.project_id}/${characterId}.${ext}`;
+            const timestamp = Date.now();
+            const filePath = `${job.project_id}/${characterId}_${timestamp}.${ext}`;
 
             const { error: uploadError } = await supabase.storage
               .from("character-images")
@@ -77,13 +113,19 @@ Deno.serve(async (req: Request) => {
                 .from("character-images")
                 .getPublicUrl(filePath);
               finalUrl = publicData.publicUrl;
+              console.log("Image uploaded to storage:", finalUrl);
+            } else {
+              console.error("Upload error:", uploadError.message);
             }
+          } else {
+            console.error("Failed to fetch image from kie.ai:", imageResponse.status);
           }
-        } catch {
-          // Fall back to original URL if upload fails
+        } catch (fetchErr: any) {
+          console.error("Error downloading/uploading image:", fetchErr.message);
         }
       }
 
+      // Update job status
       await supabase
         .from("generation_jobs")
         .update({
@@ -93,6 +135,7 @@ Deno.serve(async (req: Request) => {
         })
         .eq("id", job.id);
 
+      // Update character ref_image_url
       if (characterId) {
         await supabase
           .from("characters")
@@ -120,8 +163,17 @@ Deno.serve(async (req: Request) => {
           });
         }
       }
-    } else {
-      const errorMsg = body.msg || body.data?.error || "Generation failed";
+    } else if (!isSuccess || !resultUrl) {
+      const errorMsg =
+        body.msg ||
+        body.message ||
+        body.data?.error ||
+        body.data?.message ||
+        body.error ||
+        "Generation failed - no image URL in response";
+
+      console.error("Generation failed:", errorMsg, "Body:", JSON.stringify(body));
+
       await supabase
         .from("generation_jobs")
         .update({
@@ -136,7 +188,8 @@ Deno.serve(async (req: Request) => {
       JSON.stringify({ ok: true }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
-  } catch (err) {
+  } catch (err: any) {
+    console.error("Callback error:", err.message);
     return new Response(
       JSON.stringify({ error: err.message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

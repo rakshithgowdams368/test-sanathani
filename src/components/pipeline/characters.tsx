@@ -50,6 +50,7 @@ interface GenerationState {
   status: JobStatus;
   progress: number;
   taskId?: string;
+  jobId?: string;
   resultUrl?: string;
   error?: string;
 }
@@ -58,6 +59,7 @@ function useGenerationTracker(characterId: string, projectId: string) {
   const [state, setState] = useState<GenerationState>({ status: "idle", progress: 0 });
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef<number>(0);
+  const jobIdRef = useRef<string | null>(null);
 
   const stopPolling = useCallback(() => {
     if (intervalRef.current) {
@@ -67,22 +69,29 @@ function useGenerationTracker(characterId: string, projectId: string) {
   }, []);
 
   const poll = useCallback(async () => {
-    const { data: job } = await supabase
+    let query = supabase
       .from("generation_jobs")
-      .select("status, result_url, error")
-      .eq("project_id", projectId)
-      .contains("input", { character_id: characterId })
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .select("id, status, result_url, error");
+
+    if (jobIdRef.current) {
+      query = query.eq("id", jobIdRef.current);
+    } else {
+      query = query
+        .eq("project_id", projectId)
+        .contains("input", { character_id: characterId })
+        .order("created_at", { ascending: false })
+        .limit(1);
+    }
+
+    const { data: job } = await query.maybeSingle();
 
     if (!job) return;
 
     if (job.status === "success" && job.result_url) {
-      setState({ status: "success", progress: 100, resultUrl: job.result_url });
+      setState({ status: "success", progress: 100, resultUrl: job.result_url, jobId: job.id });
       stopPolling();
     } else if (job.status === "failed") {
-      setState({ status: "failed", progress: 0, error: job.error || "Generation failed" });
+      setState({ status: "failed", progress: 0, error: job.error || "Generation failed", jobId: job.id });
       stopPolling();
     } else {
       const elapsed = (Date.now() - startTimeRef.current) / 1000;
@@ -95,9 +104,10 @@ function useGenerationTracker(characterId: string, projectId: string) {
     }
   }, [characterId, projectId, stopPolling]);
 
-  const startTracking = useCallback((taskId: string) => {
+  const startTracking = useCallback((taskId: string, jobId?: string) => {
     startTimeRef.current = Date.now();
-    setState({ status: "queuing", progress: 5, taskId });
+    jobIdRef.current = jobId || null;
+    setState({ status: "queuing", progress: 5, taskId, jobId });
     intervalRef.current = setInterval(poll, 3000);
   }, [poll]);
 
@@ -257,7 +267,7 @@ function CharacterCard({
       }
 
       const result = await response.json();
-      startTracking(result.taskId);
+      startTracking(result.taskId, result.jobId);
       toast.success("Image generation started!");
     } catch (err: any) {
       toast.error(err.message);
@@ -307,7 +317,7 @@ function CharacterCard({
       }
 
       const result = await response.json();
-      startTracking(result.taskId);
+      startTracking(result.taskId, result.jobId);
     } catch (err: any) {
       toast.error(err.message);
       setState({ status: "failed", progress: 0, error: err.message });
@@ -353,7 +363,7 @@ function CharacterCard({
       }
 
       const result = await response.json();
-      startTracking(result.taskId);
+      startTracking(result.taskId, result.jobId);
     } catch (err: any) {
       toast.error(err.message);
       setState({ status: "failed", progress: 0, error: err.message });
@@ -384,8 +394,9 @@ function CharacterCard({
     if (state.status === "success") {
       setImageLoaded(false);
       queryClient.invalidateQueries({ queryKey: ["characters", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["character_history", char.id] });
     }
-  }, [state.status, queryClient, projectId]);
+  }, [state.status, queryClient, projectId, char.id]);
 
   const statusLabel = () => {
     switch (state.status) {
